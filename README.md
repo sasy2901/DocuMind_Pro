@@ -43,3 +43,17 @@ Vector Store: ChromaDB
 Frontend: Streamlit
 
 Embeddings: HuggingFace
+
+💻 Installation and Usage
+Clone the repository:
+
+Bash
+git clone [https://github.com/sasy2901/DocuMind_Pro.git](https://github.com/sasy2901/DocuMind_Pro.git)
+Install dependencies:
+
+Bash
+pip install -r requirements.txt
+Run the Application:
+
+Bash
+streamlit run app.py
