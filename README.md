@@ -22,6 +22,7 @@ graph TD
     Vision --> Context
     Context --> LLM[LLM Synthesis]
     LLM --> Response[Final Response]
+```
 🚀 Key Features
 Intelligent Agent Routing: Automatically detects user intent.
 
