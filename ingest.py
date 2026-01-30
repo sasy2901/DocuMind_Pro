@@ -1,48 +1,61 @@
 import os
+import logging
 from langchain_community.document_loaders import PyPDFLoader, DirectoryLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
 
+# --- LOGGING CONFIGURATION ---
+# Production-grade logging to track pipeline execution
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
 # --- CONFIGURATION ---
-DATA_PATH = "data/"  # The folder where you put your PDFs
-DB_PATH = "vectorstore/db_chroma"  # Where the processed "Brain Memory" will be saved
+DATA_PATH = "data/"
+DB_PATH = "vectorstore/db_chroma"
 
 def create_vector_db():
-    print("🚀 Starting Ingestion Process...")
+    """
+    Ingests PDF documents, generates embeddings, and persists them to ChromaDB.
+    """
+    logging.info("Initiating data ingestion pipeline...")
 
-    # 1. LOAD THE DOCUMENTS
-    # We use DirectoryLoader to find ALL files ending in .pdf inside the 'data' folder
-    print(f"📂 Loading PDFs from {DATA_PATH}...")
+    # 1. LOAD DOCUMENTS
+    # Using DirectoryLoader for scalable batch processing of unstructured PDF data.
+    if not os.path.exists(DATA_PATH):
+        logging.error(f"Data directory '{DATA_PATH}' not found.")
+        return
+
+    logging.info(f"Loading documents from: {DATA_PATH}")
     loader = DirectoryLoader(DATA_PATH, glob="*.pdf", loader_cls=PyPDFLoader)
     documents = loader.load()
     
     if not documents:
-        print("❌ No PDFs found! Please put a PDF in the 'data' folder first.")
+        logging.warning("No PDF documents found in source directory. Aborting ingestion.")
         return
 
-    print(f"✅ Loaded {len(documents)} pages from PDFs.")
+    logging.info(f"Successfully loaded {len(documents)} document pages.")
 
-    # 2. SPLIT TEXT INTO CHUNKS
-    # AI can't read whole books at once. We cut them into "chunks" of 500 characters.
-    # 'overlap' means we keep 50 characters from the previous chunk so context isn't lost.
-    print("✂️ Splitting text into chunks...")
+    # 2. TEXT SPLITTING strategy
+    # Optimized chunk size (500) to balance granular retrieval with semantic coherence.
+    # Overlap (50) ensures boundary continuity between chunks to prevent context loss.
+    logging.info("Splitting documents into semantic chunks...")
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
     texts = text_splitter.split_documents(documents)
     
-    print(f"🧩 Created {len(texts)} text chunks.")
+    logging.info(f"Generated {len(texts)} chunks for processing.")
 
-    # 3. CREATE EMBEDDINGS & STORE
-    # This turns text into "Vectors" (Numbers) that the AI can search mathematically.
-    print("🧠 Creating Embeddings (This takes a moment)...")
+    # 3. EMBEDDING GENERATION
+    # Leveraging 'all-MiniLM-L6-v2' for a high-efficiency balance of inference speed 
+    # and retrieval accuracy (Dense Vector Representation).
+    logging.info("Initializing embedding model (sentence-transformers/all-MiniLM-L6-v2)...")
     embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
     
-    # 4. SAVE TO DATABASE (ChromaDB)
-    # This creates a real folder on your computer with the searchable data.
+    # 4. VECTOR STORE PERSISTENCE
+    # Persisting vectors to disk to enable low-latency retrieval without re-indexing.
+    logging.info(f"Persisting vector store to {DB_PATH}...")
     db = Chroma.from_documents(texts, embeddings, persist_directory=DB_PATH)
     
-    print(f"🎉 Success! Database saved to '{DB_PATH}'.")
-    print("👉 You can now run 'streamlit run app.py' to chat with your docs!")
+    logging.info("Ingestion pipeline completed successfully. Vector store is ready.")
 
 if __name__ == "__main__":
     create_vector_db()
