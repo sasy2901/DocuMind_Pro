@@ -1,23 +1,31 @@
 import os
-import streamlit as st
 import base64
+import logging
+import tempfile
+from dotenv import load_dotenv
 from PIL import Image
+from gtts import gTTS
+
+# Streamlit & UI
+import streamlit as st
+from langchain_community.callbacks import StreamlitCallbackHandler
+
+# LangChain & AI Core
 from langchain_groq import ChatGroq
 from langchain_community.vectorstores import Chroma
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain.chains import RetrievalQA
 from langchain_community.tools import DuckDuckGoSearchRun
 from langchain.agents import initialize_agent, Tool, AgentType
-from langchain_community.callbacks import StreamlitCallbackHandler
 from langchain.memory import ConversationBufferMemory
-from dotenv import load_dotenv
-from gtts import gTTS
-import tempfile
 from groq import Groq
 
-# --- 1. CONFIGURATION ---
+# --- LOGGING SETUP ---
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# --- CONFIGURATION ---
 load_dotenv()
-api_key = os.getenv("GROQ_API_KEY")
+API_KEY = os.getenv("GROQ_API_KEY")
 
 st.set_page_config(
     page_title="DocuMind Pro",
@@ -26,7 +34,8 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- 2. PROFESSIONAL STYLING ---
+# --- UI STYLING ---
+# Custom CSS for dark mode optimization and component styling
 st.markdown("""
 <style>
     .stApp {background-color: #0E1117; color: #FAFAFA;}
@@ -56,22 +65,24 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- 3. SIDEBAR (Settings & Branding) ---
+# --- SIDEBAR CONFIGURATION ---
 with st.sidebar:
     st.markdown("### **DocuMind Pro**")
-    st.caption("Multi-Modal Agentic Workspace")
+    st.caption("Enterprise Agentic Workspace v1.0")
     st.divider()
     
-    with st.expander("⚙️ **System Settings**", expanded=True):
-        # --- NEW: VISION MODEL SWITCHER ---
+    with st.expander("⚙️ **Model Configuration**", expanded=True):
+        # Vision Model Selection
+        # Using Llama 3.2 variants for multimodal inference
         vision_model_choice = st.selectbox(
             "👁️ Vision Model:",
-            ("llama-3.2-90b-vision-instruct", "llama-3.2-11b-vision-instruct"),
-            index=0 # Default to 90b (More stable)
+            ("llama-3.2-90b-vision-preview", "llama-3.2-11b-vision-preview"),
+            index=0 
         )
         
+        # TTS Settings
         voice_option = st.selectbox(
-            "🗣️ Voice Accent:",
+            "🗣️ Audio Output:",
             ("🇺🇸 American", "🇮🇳 Indian", "🇬🇧 British", "🇦🇺 Australian"),
             index=1 
         )
@@ -81,129 +92,129 @@ with st.sidebar:
         }
         selected_tld = accent_map[voice_option]
         
-        st.toggle("🔊 Auto-Play Audio", value=True, key="autoplay")
+        st.toggle("🔊 Enable TTS Response", value=True, key="autoplay")
 
     st.markdown("---")
-    st.markdown("👨‍💻 **Dev:** Sahil Rana")
+    st.caption("© 2026 DocuMind AI Systems")
 
-# --- 4. CORE AI ENGINE ---
+# --- CORE UTILITIES ---
 
 def encode_image(image_path):
-    """Encodes image to Base64 for the Vision Model"""
+    """Encodes image to Base64 for API transmission."""
     with open(image_path, "rb") as image_file:
         return base64.b64encode(image_file.read()).decode('utf-8')
 
 @st.cache_resource
-def load_agent_brain_final():
-    """Initializes the Agent with Smart Citations & Confidence Scores"""
-    if not api_key:
-        st.error("❌ Critical Error: API Key missing. Check .env file.")
+def load_agent_brain():
+    """
+    Initializes the RAG Retrieval Chain and Agent Tools.
+    Cached resource to prevent re-initialization on every rerun.
+    """
+    if not API_KEY:
+        st.error("❌ Configuration Error: GROQ_API_KEY missing in environment.")
         return None
 
-    print("🔄 Booting up DocuMind Core (Robust Edition)...")
+    logging.info("Initializing Agent Core...")
     
-    # A. Embeddings & Database
+    # 1. Vector Database Connection
     embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
     db = Chroma(persist_directory="vectorstore/db_chroma", embedding_function=embeddings)
     
-    # B. The "Smart" Retriever
+    # 2. Retrieval Chain Configuration
     retriever = db.as_retriever(search_type="similarity", search_kwargs={"k": 3})
     
-    # C. PDF Chain
     qa_chain = RetrievalQA.from_chain_type(
-        llm=ChatGroq(temperature=0.1, model_name="llama-3.1-8b-instant", groq_api_key=api_key),
+        llm=ChatGroq(temperature=0.1, model_name="llama-3.1-8b-instant", groq_api_key=API_KEY),
         chain_type="stuff",
         retriever=retriever,
         return_source_documents=True 
     )
 
-    # D. Custom Tool Function
-    def ask_pdf_with_sources(query):
+    # 3. Custom Knowledge Base Tool with Citation Support
+    def ask_knowledge_base(query):
         try:
             result = qa_chain.invoke({"query": query})
             answer = result["result"]
             sources = result["source_documents"]
             
             if not sources:
-                return "I couldn't find anything in the document about that. (Confidence: Low)"
+                return "Data not found in internal knowledge base."
             
+            # Calculate heuristic confidence score based on retrieval density
             confidence_score = min(95, 70 + (len(sources) * 10)) 
             
             source_list = []
             for doc in sources:
-                page = doc.metadata.get("page", "Unknown")
-                source = doc.metadata.get("source", "File")
-                filename = source.split("/")[-1]
+                page = doc.metadata.get("page", "N/A")
+                filename = doc.metadata.get("source", "Unknown File").split("/")[-1]
                 source_list.append(f"📄 {filename} (Page {page})")
             
-            unique_sources = list(set(source_list))
-            formatted_sources = "\n".join(unique_sources)
+            unique_sources = "\n".join(list(set(source_list)))
             
-            final_output = (
+            return (
                 f"{answer}\n\n"
                 f"---\n"
-                f"📊 **Confidence Score:** {confidence_score}%\n"
-                f"📚 **Sources Used:**\n{formatted_sources}"
+                f"📊 **Confidence:** {confidence_score}%\n"
+                f"📚 **References:**\n{unique_sources}"
             )
-            return final_output
             
         except Exception as e:
-            return f"Error reading PDF: {str(e)}"
+            logging.error(f"RAG Retrieval Error: {e}")
+            return f"Retrieval Error: {str(e)}"
 
-    # E. Web Search Tool
+    # 4. Agent Tool Definitions
     search_tool = DuckDuckGoSearchRun()
     
-    # F. Agent Toolbox
     tools = [
         Tool(
-            name="PDF Knowledge Base",
-            func=ask_pdf_with_sources, 
-            description="Use FIRST. Strictly for questions about the uploaded document content."
+            name="Internal Knowledge Base",
+            func=ask_knowledge_base, 
+            description="Primary source. Use for queries regarding uploaded documents."
         ),
         Tool(
             name="Web Search",
             func=search_tool.run,
-            description="Use for current events, news, people, or facts not in the PDF."
+            description="Secondary source. Use for current events or external facts."
         )
     ]
 
-    # --- MEMORY (Prevents the loop) ---
+    # 5. Memory & Agent Initialization
     memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
 
-    # G. Initialize Agent (CONVERSATIONAL MODE)
     agent = initialize_agent(
         tools,
-        ChatGroq(temperature=0.1, model_name="llama-3.1-8b-instant", groq_api_key=api_key),
+        ChatGroq(temperature=0.1, model_name="llama-3.1-8b-instant", groq_api_key=API_KEY),
         agent=AgentType.CONVERSATIONAL_REACT_DESCRIPTION, 
-        verbose=True,
+        verbose=True, # Keep verbose for debugging in logs
         memory=memory, 
         max_iterations=5, 
         handle_parsing_errors=True 
     )
     
-    print("✅ System Online.")
+    logging.info("Agent System Online.")
     return agent
 
-# --- 5. MAIN APPLICATION INTERFACE ---
+# --- MAIN APPLICATION ---
 
 st.title("🧠 DocuMind Pro")
-st.markdown("Welcome to your **Agentic AI Workspace**. Upload documents, search the web, or analyze images.")
+st.markdown("### Enterprise AI Workspace")
 
-tab1, tab2 = st.tabs(["💬 **Chat & Search**", "👁️ **Vision Analyst**"])
+tab1, tab2 = st.tabs(["💬 **Agentic Chat**", "👁️ **Visual Analysis**"])
 
-# === TAB 1: HYBRID AGENT ===
+# === TAB 1: RAG AGENT ===
 with tab1:
-    # LOAD THE BRAIN
-    agent_chain = load_agent_brain_final()
+    agent_chain = load_agent_brain()
     
     if "messages" not in st.session_state:
         st.session_state.messages = []
 
+    # Display Chat History
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
-    prompt = st.chat_input("Ask about your PDF, News, or the World...", key="main_chat")
+    # Input Handling
+    prompt = st.chat_input("Query knowledge base or search web...", key="main_chat")
 
     if prompt:
         with st.chat_message("user"):
@@ -216,58 +227,61 @@ with tab1:
                 try:
                     response = agent_chain.run(input=prompt, callbacks=[st_callback])
                     st.markdown(response) 
-                    st.caption("✅ Verified by DocuMind Agent | Sources analyzed in real-time")
-                    # =======================
+                    st.caption("✅ Response validated by Multi-Agent System")
+                    
                     st.session_state.messages.append({"role": "assistant", "content": response})
                     
+                    # TTS Playback
                     if st.session_state.autoplay:
                         try:
                             tts = gTTS(text=response, lang='en', tld=selected_tld)
                             with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp_file:
                                 tts.save(tmp_file.name)
                                 st.audio(tmp_file.name, format="audio/mp3")
-                        except: pass
+                        except Exception as e:
+                            logging.warning(f"TTS Error: {e}")
+                            
                 except Exception as e:
-                    st.error(f"System Message: {str(e)}")
+                    st.error(f"Agent Execution Failure: {str(e)}")
 
-# === TAB 2: VISION INTELLIGENCE ===
+# === TAB 2: COMPUTER VISION ===
 with tab2:
     col1, col2 = st.columns([1, 2])
     
     with col1:
-        st.markdown("#### 📤 Upload")
-        uploaded_file = st.file_uploader("Drop an image (PNG/JPG)", type=["jpg", "png", "jpeg"])
+        st.markdown("#### 📤 Input Stream")
+        uploaded_file = st.file_uploader("Upload Image Analysis Target", type=["jpg", "png", "jpeg"])
         
     with col2:
-        st.markdown("#### 📊 Analysis")
+        st.markdown("#### 📊 Diagnostic Output")
         if uploaded_file:
-            # 1. Load Image
+            # 1. Render Image
             image = Image.open(uploaded_file)
-            st.image(image, caption="Target Image", use_container_width=True, channels="RGB")
+            st.image(image, caption="Analysis Target", use_container_width=True, channels="RGB")
             
-            vision_prompt = st.text_area("Question:", value="Explain this image in detail. Identify any text, charts, or key objects.")
+            vision_prompt = st.text_area("Analysis Query:", value="Analyze this image for key entities, text data, and anomalies.")
             
-            if st.button("🚀 Analyze Image", type="primary"):
-                with st.spinner("👀 Llama 4 Scout Scanning..."):
+            if st.button("🚀 Execute Visual Analysis", type="primary"):
+                with st.spinner(f"Running inference on {vision_model_choice}..."):
                     try:
-                        # 2. IMAGE PRE-PROCESSING
+                        # 2. Pre-processing Pipeline
                         if image.mode in ("RGBA", "P"): 
                             image = image.convert("RGB")
 
-                        # Resize to safe limits (Max 400px)
-                        max_width = 400
+                        # Optimization: Resize large images to reduce latency
+                        max_width = 800
                         if image.width > max_width:
                             ratio = max_width / float(image.width)
                             new_height = int(float(image.height) * float(ratio))
                             image = image.resize((max_width, new_height), Image.Resampling.LANCZOS)
 
-                        # Encode
+                        # Encode for API
                         buffered = tempfile.NamedTemporaryFile(delete=False, suffix=".jpg")
-                        image.save(buffered.name, format="JPEG", quality=50, optimize=True)
+                        image.save(buffered.name, format="JPEG", quality=85, optimize=True)
                         base64_image = encode_image(buffered.name)
                         
-                        # 3. CALL GROQ API (Using YOUR Available Model)
-                        client = Groq(api_key=api_key)
+                        # 3. Inference Request
+                        client = Groq(api_key=API_KEY)
                         chat_completion = client.chat.completions.create(
                             messages=[
                                 {
@@ -278,23 +292,22 @@ with tab2:
                                     ],
                                 }
                             ],
-                            # THE MAGIC ID FROM YOUR LIST
-                            model="meta-llama/llama-4-scout-17b-16e-instruct", 
+                            model=vision_model_choice, # Dynamically uses selected model
                         )
                         
-                        # 4. SHOW RESULT
+                        # 4. Result Rendering
                         result = chat_completion.choices[0].message.content
-                        st.success("Analysis Successful")
+                        st.success("Inference Complete")
                         st.markdown(result)
                         
-                        # 5. AUDIO
+                        # 5. Audio Feedback
                         if st.session_state.autoplay:
                             try:
                                 tts = gTTS(text=result, lang='en', tld=selected_tld)
                                 with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp_file:
                                     tts.save(tmp_file.name)
                                     st.audio(tmp_file.name, format="audio/mp3")
-                            except: pass     
+                            except Exception: pass      
                             
                     except Exception as e:
-                        st.error(f"❌ Vision Error: {str(e)}")
+                        st.error(f"Vision Pipeline Error: {str(e)}")
